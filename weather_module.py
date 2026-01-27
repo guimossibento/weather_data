@@ -1,9 +1,9 @@
 import sys
-
 import requests
 import json
 import glob
 import hashlib
+import pickle
 from pathlib import Path
 from datetime import date, datetime, timedelta
 import numpy as np
@@ -13,9 +13,10 @@ from scipy.interpolate import LinearNDInterpolator
 from sklearn.neighbors import KNeighborsRegressor
 
 PROJECT_ROOT = Path.cwd()
-AEMET_DIR = PROJECT_ROOT / 'aemet/2022'
+AEMET_DIR = PROJECT_ROOT / 'aemet'
 CACHE_DIR = PROJECT_ROOT / 'cache/weather'
 RESULT_CACHE_DIR = PROJECT_ROOT / 'cache/weather_results'
+AEMET_CACHE_FILE = CACHE_DIR / 'aemet_data.pkl'
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 RESULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -32,9 +33,27 @@ OPENMETEO_VARS = [
     'evapotranspiration', 'vapour_pressure_deficit'
 ]
 
+# Lazy loaded data
+_df_bal = None
 
-def _load_aemet_data():
-    json_files = sorted(glob.glob(str(AEMET_DIR / '*.json')))
+
+def _load_aemet_data(force_reload=False):
+    """Load AEMET data with pickle cache."""
+    global _df_bal
+
+    if _df_bal is not None and not force_reload:
+        return _df_bal
+
+    # Try pickle cache first
+    if AEMET_CACHE_FILE.exists() and not force_reload:
+        try:
+            _df_bal = pd.read_pickle(AEMET_CACHE_FILE)
+            return _df_bal
+        except:
+            pass
+
+    # Load from JSON files (all years)
+    json_files = sorted(glob.glob(str(AEMET_DIR / '**/*.json'), recursive=True))
 
     all_records = []
     for f in json_files:
@@ -47,29 +66,30 @@ def _load_aemet_data():
             pass
 
     if not all_records:
-        return pd.DataFrame()
+        _df_bal = pd.DataFrame()
+        return _df_bal
 
     df = pd.DataFrame(all_records)
     df['fint'] = pd.to_datetime(df['fint'])
 
-    # Filter by bounding box
-    df_bal = df[
+    _df_bal = df[
         (df['lat'] >= BBOX['lat_min']) & (df['lat'] <= BBOX['lat_max']) &
         (df['lon'] >= BBOX['lon_min']) & (df['lon'] <= BBOX['lon_max'])
         ].copy()
 
-    # Filter by altitude if column exists
-    if 'alt' in df_bal.columns:
-        df_bal = df_bal[df_bal['alt'] <= ALT_THRESHOLD].copy()
+    if 'alt' in _df_bal.columns:
+        _df_bal = _df_bal[_df_bal['alt'] <= ALT_THRESHOLD].copy()
 
-    return df_bal
+    # Save pickle cache
+    try:
+        _df_bal.to_pickle(AEMET_CACHE_FILE)
+    except:
+        pass
 
-
-df_bal = _load_aemet_data()
+    return _df_bal
 
 
 def _parse_datetime(target_dt):
-    """Parse input to datetime object."""
     if isinstance(target_dt, str):
         return pd.to_datetime(target_dt)
     elif isinstance(target_dt, date) and not isinstance(target_dt, datetime):
@@ -77,28 +97,29 @@ def _parse_datetime(target_dt):
     return target_dt
 
 
-def _get_result_cache_key(lat, lon, target_dt):
-    """Cache key includes hour for hourly precision."""
+def _get_cache_key(lat, lon, target_dt):
     dt_str = target_dt.strftime('%Y-%m-%d_%H')
     return hashlib.md5(f"{lat:.4f}_{lon:.4f}_{dt_str}".encode()).hexdigest()
 
 
 def _load_from_cache(lat, lon, target_dt):
-    cache_key = _get_result_cache_key(lat, lon, target_dt)
-    cache_file = RESULT_CACHE_DIR / f"{cache_key}.json"
-
+    cache_file = RESULT_CACHE_DIR / f"{_get_cache_key(lat, lon, target_dt)}.pkl"
     if cache_file.exists():
-        with open(cache_file, 'r') as f:
-            return json.load(f)
+        try:
+            with open(cache_file, 'rb') as f:
+                return pickle.load(f)
+        except:
+            pass
     return None
 
 
 def _save_to_cache(lat, lon, target_dt, result):
-    cache_key = _get_result_cache_key(lat, lon, target_dt)
-    cache_file = RESULT_CACHE_DIR / f"{cache_key}.json"
-
-    with open(cache_file, 'w') as f:
-        json.dump(result, f)
+    cache_file = RESULT_CACHE_DIR / f"{_get_cache_key(lat, lon, target_dt)}.pkl"
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump(result, f)
+    except:
+        pass
 
 
 def _hull_multipoint_interpolate(points, values, target):
@@ -135,50 +156,57 @@ def _hull_multipoint_interpolate(points, values, target):
     return float(knn.predict(target)[0])
 
 
-def _get_aemet_var(df, lat, lon, target_dt, var, time_window_hours=1):
-    """Get AEMET variable with time window filtering."""
-    if var not in df.columns:
-        return None
+def _get_all_aemet_vars(lat, lon, target_dt, time_window_hours=1):
+    """Get ALL AEMET variables in one pass (faster than per-variable)."""
+    df = _load_aemet_data()
+    if len(df) == 0:
+        print("[AEMET] No data loaded")
+        return {}
 
     target_dt = _parse_datetime(target_dt)
-
-    # Filter by time window around target datetime
     time_start = target_dt - timedelta(hours=time_window_hours)
     time_end = target_dt + timedelta(hours=time_window_hours)
 
     time_data = df[(df['fint'] >= time_start) & (df['fint'] <= time_end)]
-
-    # Fallback to day if no data in time window
     if len(time_data) == 0:
         time_data = df[df['fint'].dt.date == target_dt.date()]
-
     if len(time_data) == 0:
-        return None
+        print(f"[AEMET] No data for {target_dt.date()}")
+        return {}
 
-    stations = time_data.groupby(['idema', 'lat', 'lon']).agg({var: 'mean'}).reset_index()
+    available_vars = [v for v in AEMET_VARS if v in time_data.columns]
+    if not available_vars:
+        return {}
 
-    missing = stations[var].isna()
-    if missing.any() and (~missing).sum() >= 2:
-        knn = KNeighborsRegressor(n_neighbors=min(3, (~missing).sum()), weights='distance')
-        knn.fit(stations.loc[~missing, ['lon', 'lat']].values, stations.loc[~missing, var].values)
-        stations.loc[missing, var] = knn.predict(stations.loc[missing, ['lon', 'lat']].values)
+    agg_dict = {v: 'mean' for v in available_vars}
+    stations = time_data.groupby(['idema', 'lat', 'lon']).agg(agg_dict).reset_index()
 
-    stations = stations.dropna(subset=[var])
-    if len(stations) == 0:
-        return None
-
-    if len(stations) < 3:
-        return float(stations[var].mean())
-
-    points = stations[['lon', 'lat']].values
-    values = stations[var].values
+    result = {}
     target = np.array([[lon, lat]])
 
-    return _hull_multipoint_interpolate(points, values, target)
+    for var in available_vars:
+        var_stations = stations[['lon', 'lat', var]].dropna()
+        if len(var_stations) == 0:
+            continue
+
+        if len(var_stations) < 3:
+            result[f'ae_{var}'] = round(float(var_stations[var].mean()), 4)
+            continue
+
+        points = var_stations[['lon', 'lat']].values
+        values = var_stations[var].values
+
+        try:
+            val = _hull_multipoint_interpolate(points, values, target)
+            if val is not None:
+                result[f'ae_{var}'] = round(val, 4)
+        except Exception as e:
+            result[f'ae_{var}'] = round(float(values.mean()), 4)
+
+    return result
 
 
 def _get_openmeteo(lat, lon, target_dt):
-    """Get OpenMeteo data for specific hour."""
     target_dt = _parse_datetime(target_dt)
     target_date = target_dt.date()
     target_hour = target_dt.hour
@@ -206,20 +234,26 @@ def _get_openmeteo(lat, lon, target_dt):
             )
             resp.raise_for_status()
             data = resp.json()
+
+            # Check for API error response
+            if 'error' in data:
+                print(f"[OpenMeteo] API error: {data.get('reason', 'Unknown')}")
+                return {}
+
             with open(cache_file, 'w') as f:
                 json.dump(data, f)
-        except:
+        except requests.exceptions.RequestException as e:
+            print(f"[OpenMeteo] Request failed: {e}")
+            return {}
+        except Exception as e:
+            print(f"[OpenMeteo] Error: {e}")
             return {}
 
     if 'hourly' not in data:
         return {}
 
     times = pd.to_datetime(data['hourly']['time'])
-
-    # Filter for specific hour (+/- 1 hour window)
     mask = (times.date == target_date) & (abs(times.hour - target_hour) <= 1)
-
-    # Fallback to full day if no data in window
     if not mask.any():
         mask = times.date == target_date
 
@@ -229,19 +263,19 @@ def _get_openmeteo(lat, lon, target_dt):
             vals = np.array(data['hourly'][var])[mask]
             vals = vals[~pd.isna(vals)]
             if len(vals) > 0:
-                result[var] = float(np.mean(vals))
+                result[var] = round(float(np.mean(vals)), 4)
     return result
 
 
 def get_weather_at_point(lat, lon, target_dt, use_cache=True, time_window_hours=1):
     """
-    Get all weather variables at any coordinate for a specific datetime.
+    Get all weather variables at any coordinate.
 
     Parameters:
         lat, lon: target coordinates
-        target_dt: datetime object, date object, or string (e.g. '2022-10-26 14:30')
-        use_cache: if True, check/save result cache
-        time_window_hours: hours before/after target time to include for AEMET
+        target_dt: datetime, date, or string
+        use_cache: use pickle cache for results
+        time_window_hours: AEMET time window
 
     Returns:
         dict with 'ae_*' (AEMET) and 'om_*' (OpenMeteo) keys
@@ -251,67 +285,71 @@ def get_weather_at_point(lat, lon, target_dt, use_cache=True, time_window_hours=
     if use_cache:
         cached = _load_from_cache(lat, lon, target_dt)
         if cached is not None:
-            print(f"Using cached weather for ({lat}, {lon}) at {target_dt}")
             return cached
 
-    result = {}
-
-    for var in AEMET_VARS:
-        val = _get_aemet_var(df_bal, lat, lon, target_dt, var, time_window_hours)
-        if val is not None:
-            result[f'ae_{var}'] = val
+    result = _get_all_aemet_vars(lat, lon, target_dt, time_window_hours)
 
     om = _get_openmeteo(lat, lon, target_dt)
     for var, val in om.items():
         result[f'om_{var}'] = val
 
+    # Always save to cache if we got any result
     if use_cache and result:
         _save_to_cache(lat, lon, target_dt, result)
+        print(f"[Weather] Cached result for ({lat:.4f}, {lon:.4f}) at {target_dt}")
 
     return result
 
 
+def reload_aemet_data():
+    """Force reload AEMET data from JSON files."""
+    return _load_aemet_data(force_reload=True)
+
+
+def check_openmeteo_connectivity():
+    """Check if OpenMeteo API is accessible."""
+    try:
+        resp = requests.get(
+            "https://archive-api.open-meteo.com/v1/archive",
+            params={'latitude': 39.5, 'longitude': 2.5, 'start_date': '2022-07-15', 'end_date': '2022-07-16', 'hourly': 'temperature_2m'},
+            timeout=10
+        )
+        return {"status": "ok", "code": resp.status_code}
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "message": str(e)}
+
+
 def get_station_info():
-    """Get info about loaded stations."""
-    if len(df_bal) == 0:
+    df = _load_aemet_data()
+    if len(df) == 0:
         return {'records': 0, 'stations': 0}
 
-    stations = df_bal.groupby('idema').agg({
-        'lat': 'first', 'lon': 'first'
-    }).reset_index()
-
-    if 'alt' in df_bal.columns:
-        alt_info = df_bal.groupby('idema')['alt'].first()
-        stations = stations.merge(alt_info, on='idema')
+    # Get available years from data
+    years = sorted(df['fint'].dt.year.unique().tolist())
 
     return {
-        'records': len(df_bal),
-        'stations': df_bal['idema'].nunique(),
-        'date_range': (df_bal['fint'].min(), df_bal['fint'].max()),
+        'records': len(df),
+        'stations': df['idema'].nunique(),
+        'years': years,
+        'date_range': (df['fint'].min(), df['fint'].max()),
         'alt_threshold': ALT_THRESHOLD
     }
 
 
 if __name__ == '__main__':
-    # info = get_station_info()
-    # print(f"AEMET records: {info['records']:,}")
-    # print(f"Stations: {info['stations']}")
-    # print(f"Altitude threshold: {info['alt_threshold']}m")
-
-    # Get coordinates from arguments or use default
     if len(sys.argv) >= 3:
-        lat = float(sys.argv[1])
-        lon = float(sys.argv[2])
+        lat, lon = float(sys.argv[1]), float(sys.argv[2])
     else:
-        lat, lon = 39.7325522, 3.2400431  # Default coordinates
+        lat, lon = 39.7325522, 3.2400431
 
-    # Test with date string
     target_date = datetime(2022, 10, 26, 22, 30)
-    # Test with datetime
-    weather = get_weather_at_point(
-        lat=lat,
-        lon=lon,
-        target_dt=target_date
-    )
+
+    import time
+
+    t0 = time.time()
+    weather = get_weather_at_point(lat, lon, target_date)
+    t1 = time.time()
+
     print(f"Weather at ({lat}, {lon}) on {target_date}:")
     print(json.dumps(weather, indent=2))
+    print(f"\nTime: {t1 - t0:.3f}s")

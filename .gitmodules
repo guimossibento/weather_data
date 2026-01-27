@@ -1,0 +1,3 @@
+[submodule "Bayesian-Crowd-Counting"]
+	path = Bayesian-Crowd-Counting
+	url = git@github.com:zhiheng-ma/Bayesian-Crowd-Counting.git
