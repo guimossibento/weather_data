@@ -13,7 +13,7 @@ import threading
 import uuid
 import json
 import gc
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import FastAPI, Query, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -620,86 +620,18 @@ def predict_directory(
 
 def _process_directory_task(task_id: str, image_files: list, dir_path: Path, lat: float, lon: float,
                             cache_name: str, used_model: str, use_cache: bool):
-    """Background task for directory processing - memory efficient."""
+    """Background task for directory processing - OPTIMIZED with batch inference."""
     import gc
 
     try:
         predictor = get_predictor(used_model)
-        total = len(image_files)
+        predictor.load()
 
-        for idx, img_path in enumerate(image_files):
-            try:
-                path = Path(img_path)
-                filename = path.name
-                rel_path = path.parent.relative_to(dir_path)
-                subpath = str(rel_path) if str(rel_path) != "." else None
+        # Phase 1: Check cache and collect uncached images
+        to_predict = []
+        cached_count = 0
 
-                if use_cache:
-                    cached = load_prediction_from_cache(filename, lat, lon, model=used_model, name=cache_name, subpath=subpath)
-                    if cached:
-                        task_manager.increment_progress(task_id, success=True, from_cache=True, last_item=filename)
-                        del cached
-                        continue
-
-                if not path.exists():
-                    task_manager.increment_progress(task_id, success=False, last_item=filename)
-                    continue
-
-                target_dt = parse_datetime_from_filename(filename)
-                if target_dt is None:
-                    task_manager.increment_progress(task_id, success=False, last_item=filename)
-                    continue
-
-                count = predictor.predict(path)
-                weather_data = get_weather_at_point(lat, lon, target_dt, use_cache=True)
-
-                row = {
-                    "path": img_path,
-                    "filename": filename,
-                    "subpath": subpath,
-                    "cache_name": cache_name,
-                    "datetime": target_dt.isoformat(),
-                    "lat": lat,
-                    "lon": lon,
-                    "count": count,
-                    "model": used_model,
-                    "weather": weather_data
-                }
-
-                if use_cache:
-                    save_prediction_to_cache(filename, lat, lon, row, model=used_model, name=cache_name, subpath=subpath)
-
-                task_manager.increment_progress(task_id, success=True, from_cache=False, last_item=filename)
-                del row, weather_data, count
-
-                # AGGRESSIVE cleanup every 5 images
-                if idx % 5 == 0:
-                    gc.collect()
-                    cleanup_memory()
-
-                if idx % 50 == 0 and idx > 0:
-                    print(f"[Task {task_id}] Processed {idx}/{total} ({idx * 100 // total}%)")
-
-            except Exception as e:
-                task_manager.increment_progress(task_id, success=False, last_item=Path(img_path).name if img_path else None)
-
-        gc.collect()
-        cleanup_memory()
-        task_manager.update_task(task_id, status="completed", completed_at=datetime.now().isoformat())
-        print(f"[Task {task_id}] Completed!")
-
-    except Exception as e:
-        task_manager.update_task(task_id, status="failed", error=str(e), completed_at=datetime.now().isoformat())
-
-
-def _process_directory_sync(image_files: list, dir_path: Path, lat: float, lon: float,
-                            cache_name: str, used_model: str, use_cache: bool, output_format: str):
-    """Synchronous directory processing."""
-    predictor = get_predictor(used_model)
-    results = []
-
-    for idx, img_path in enumerate(image_files):
-        try:
+        for img_path in image_files:
             path = Path(img_path)
             filename = path.name
             rel_path = path.parent.relative_to(dir_path)
@@ -708,50 +640,175 @@ def _process_directory_sync(image_files: list, dir_path: Path, lat: float, lon: 
             if use_cache:
                 cached = load_prediction_from_cache(filename, lat, lon, model=used_model, name=cache_name, subpath=subpath)
                 if cached:
-                    cached["from_cache"] = True
-                    results.append(cached)
+                    task_manager.increment_progress(task_id, success=True, from_cache=True, last_item=filename)
+                    cached_count += 1
                     continue
-
-            if not path.exists():
-                results.append({"path": img_path, "filename": filename, "subpath": subpath, "cache_name": cache_name, "error": "File not found"})
-                continue
 
             target_dt = parse_datetime_from_filename(filename)
             if target_dt is None:
-                results.append({"path": img_path, "filename": filename, "subpath": subpath, "cache_name": cache_name, "error": "Could not parse datetime"})
+                task_manager.increment_progress(task_id, success=False, last_item=filename)
                 continue
 
-            count = predictor.predict(path)
+            to_predict.append({
+                'path': img_path,
+                'filename': filename,
+                'subpath': subpath,
+                'datetime': target_dt
+            })
 
-            # Cleanup memory periodically
-            if idx % 5 == 0:
-                cleanup_memory()
+        if not to_predict:
+            task_manager.update_task(task_id, status="completed", completed_at=datetime.now().isoformat())
+            return
 
-            weather_data = get_weather_at_point(lat, lon, target_dt, use_cache=True)
+        # Phase 2: Batch predict all uncached images
+        paths = [item['path'] for item in to_predict]
+        counts = predictor.predict_batch(paths)
+
+        # Phase 3: Fetch weather in parallel
+        def fetch_weather(item):
+            try:
+                return item['path'], get_weather_at_point(lat, lon, item['datetime'], use_cache=True)
+            except:
+                return item['path'], {}
+
+        weather_results = {}
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(fetch_weather, item) for item in to_predict]
+            for future in as_completed(futures):
+                path, weather = future.result()
+                weather_results[path] = weather
+
+        # Phase 4: Save results
+        for item, count in zip(to_predict, counts):
+            if count is None:
+                task_manager.increment_progress(task_id, success=False, last_item=item['filename'])
+                continue
 
             row = {
-                "path": img_path, "filename": filename, "subpath": subpath, "cache_name": cache_name,
-                "datetime": target_dt.isoformat(), "lat": lat, "lon": lon,
-                "count": count, "model": used_model, "weather": weather_data
+                "path": item['path'],
+                "filename": item['filename'],
+                "subpath": item['subpath'],
+                "cache_name": cache_name,
+                "datetime": item['datetime'].isoformat(),
+                "lat": lat,
+                "lon": lon,
+                "count": round(count, 4),
+                "model": used_model,
+                "weather": weather_results.get(item['path'], {})
+            }
+
+            if use_cache:
+                save_prediction_to_cache(item['filename'], lat, lon, row, model=used_model, name=cache_name, subpath=item['subpath'])
+
+            task_manager.increment_progress(task_id, success=True, from_cache=False, last_item=item['filename'])
+
+        gc.collect()
+        cleanup_memory()
+        task_manager.update_task(task_id, status="completed", completed_at=datetime.now().isoformat())
+        print(f"[Task {task_id}] Completed! (cached: {cached_count}, predicted: {len(to_predict)})")
+
+    except Exception as e:
+        task_manager.update_task(task_id, status="failed", error=str(e), completed_at=datetime.now().isoformat())
+
+
+def _process_directory_sync(image_files: list, dir_path: Path, lat: float, lon: float,
+                            cache_name: str, used_model: str, use_cache: bool, output_format: str):
+    """Synchronous directory processing - OPTIMIZED with batch inference."""
+    predictor = get_predictor(used_model)
+    predictor.load()
+
+    results = []
+    to_predict = []
+
+    # Phase 1: Check cache
+    for img_path in image_files:
+        path = Path(img_path)
+        filename = path.name
+        rel_path = path.parent.relative_to(dir_path)
+        subpath = str(rel_path) if str(rel_path) != "." else None
+
+        if use_cache:
+            cached = load_prediction_from_cache(filename, lat, lon, model=used_model, name=cache_name, subpath=subpath)
+            if cached:
+                cached["from_cache"] = True
+                results.append(cached)
+                continue
+
+        target_dt = parse_datetime_from_filename(filename)
+        if target_dt is None:
+            results.append({
+                "path": img_path,
+                "filename": filename,
+                "subpath": subpath,
+                "cache_name": cache_name,
+                "error": "Could not parse datetime"
+            })
+            continue
+
+        to_predict.append({
+            'path': img_path,
+            'filename': filename,
+            'subpath': subpath,
+            'datetime': target_dt
+        })
+
+    # Phase 2: Batch predict
+    if to_predict:
+        paths = [item['path'] for item in to_predict]
+        counts = predictor.predict_batch(paths)
+
+        # Phase 3: Fetch weather in parallel
+        def fetch_weather(item):
+            try:
+                return item['path'], get_weather_at_point(lat, lon, item['datetime'], use_cache=True)
+            except:
+                return item['path'], {}
+
+        weather_results = {}
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(fetch_weather, item) for item in to_predict]
+            for future in as_completed(futures):
+                path, weather = future.result()
+                weather_results[path] = weather
+
+        # Phase 4: Build results
+        for item, count in zip(to_predict, counts):
+            if count is None:
+                results.append({
+                    "path": item['path'],
+                    "filename": item['filename'],
+                    "subpath": item['subpath'],
+                    "cache_name": cache_name,
+                    "error": "Prediction failed"
+                })
+                continue
+
+            row = {
+                "path": item['path'],
+                "filename": item['filename'],
+                "subpath": item['subpath'],
+                "cache_name": cache_name,
+                "datetime": item['datetime'].isoformat(),
+                "lat": lat,
+                "lon": lon,
+                "count": round(count, 4),
+                "model": used_model,
+                "weather": weather_results.get(item['path'], {})
             }
             results.append(row)
 
             if use_cache:
-                save_prediction_to_cache(filename, lat, lon, row, model=used_model, name=cache_name, subpath=subpath)
-        except Exception as e:
-            results.append({"path": img_path, "filename": Path(img_path).name if img_path else None, "cache_name": cache_name, "error": str(e)})
+                save_prediction_to_cache(item['filename'], lat, lon, row, model=used_model, name=cache_name, subpath=item['subpath'])
+
+    cleanup_memory()
 
     success_count = len([r for r in results if "error" not in r])
     error_count = len([r for r in results if "error" in r])
 
-    # Final cleanup
-    cleanup_memory()
-
     if output_format == "csv":
-        return _to_csv_response(results, f"{cache_name}_predictions.csv")
+        return _to_csv_response(results, "predictions.csv")
 
-    return {"directory": str(dir_path), "cache_name": cache_name, "count": len(results), "success": success_count, "errors": error_count, "results": results}
-
+    return {"count": len(results), "success": success_count, "errors": error_count, "results": results}
 
 # ============================================================
 # TASK ENDPOINTS

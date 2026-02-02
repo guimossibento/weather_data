@@ -1,3 +1,4 @@
+import gc
 import os
 import sys
 import io
@@ -692,6 +693,95 @@ def inspect_low_count_cameras(model=None, threshold=60, n_samples=2, images_base
 
     return {'cameras': low_count, 'analyses': analyses}
 
+def predict_batch(self, image_paths, batch_size=None, num_workers=None):
+    """
+    Batch prediction for multiple images - much faster than sequential.
+    Auto-selects optimal settings based on device.
+    """
+    import torch
+    from torch.utils.data import Dataset, DataLoader
+    from PIL import Image
+
+    self.load()
+
+    # Device-specific optimal settings
+    if self.device.type == 'cuda':
+        batch_size = batch_size or 32
+        num_workers = num_workers if num_workers is not None else 4
+        pin_memory = True
+    elif self.device.type == 'mps':
+        batch_size = batch_size or 8
+        num_workers = 0  # MPS doesn't work well with multiprocessing
+        pin_memory = False
+    else:
+        batch_size = batch_size or 4
+        num_workers = num_workers if num_workers is not None else 2
+        pin_memory = False
+
+    class ImageDataset(Dataset):
+        def __init__(ds_self, paths, transform):
+            ds_self.paths = paths
+            ds_self.transform = transform
+
+        def __len__(ds_self):
+            return len(ds_self.paths)
+
+        def __getitem__(ds_self, idx):
+            try:
+                img = Image.open(ds_self.paths[idx]).convert('RGB')
+                tensor = ds_self.transform(img)
+                img.close()
+                return tensor, idx, True
+            except Exception:
+                return torch.zeros(3, 224, 224), idx, False
+
+    dataset = ImageDataset(image_paths, self.transform)
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        shuffle=False
+    )
+
+    results = [None] * len(image_paths)
+
+    with torch.no_grad():
+        for batch_tensors, indices, valid_flags in loader:
+            if self.device.type == 'cuda':
+                batch_tensors = batch_tensors.to(self.device, non_blocking=True)
+            else:
+                batch_tensors = batch_tensors.to(self.device)
+
+            outputs = self.model(batch_tensors)
+
+            for i, (idx, valid) in enumerate(zip(indices, valid_flags)):
+                idx_val = idx.item()
+                if valid:
+                    results[idx_val] = torch.sum(outputs[i]).item()
+
+            del batch_tensors, outputs
+
+    # Cleanup
+    if self.device.type == 'cuda':
+        torch.cuda.empty_cache()
+    elif self.device.type == 'mps':
+        if hasattr(torch.mps, 'synchronize'):
+            torch.mps.synchronize()
+        torch.mps.empty_cache()
+
+    gc.collect()
+    return results
+
+
+
+def predict_count_batch(image_paths, batch_size=None, num_workers=None) -> list:
+    """Batch predict crowd counts using active model."""
+    predictor = _registry.get_active()
+    if hasattr(predictor, 'predict_batch'):
+        return predictor.predict_batch(image_paths, batch_size, num_workers)
+    # Fallback to sequential
+    return [predictor.predict(p) for p in image_paths]
 
 # ============================================================
 # MAIN
