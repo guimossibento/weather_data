@@ -1,0 +1,222 @@
+{
+  "ClubNauticSoller/webcam-mestral": {
+    "lat": 39.802352,
+    "lon": 2.677745,
+    "name": "Costa Soller"
+  },
+  "ClubNauticSoller/webcamHD": {
+    "lat": 39.802352,
+    "lon": 2.677745,
+    "name": "Costa Soller"
+  },
+  "Guenthoer/ibiza": {
+    "lat": 39.015765,
+    "lon": 1.584563,
+    "name": "Cala Llenya"
+  },
+  "HeliosHotel/frontline": {
+    "lat": 39.534686,
+    "lon": 2.717979,
+    "name": "Platja dor (Can Pastilla)"
+  },
+  "HeliosHotel/frontline-2": {
+    "lat": 39.534686,
+    "lon": 2.717979,
+    "name": "Platja dor (Can Pastilla)"
+  },
+  "ibred/d": {
+    "lat": 39.815859,
+    "lon": 4.245493,
+    "name": "cala-torret"
+  },
+  "ibred/i": {
+    "lat": 39.923263,
+    "lon": 3.0615,
+    "name": "cala-sant-vicenc"
+  },
+  "ibred/j": {
+    "lat": 39.567741,
+    "lon": 3.375049,
+    "name": "s-illot"
+  },
+  "ibred/k": {
+    "lat": 39.786693,
+    "lon": 3.295874,
+    "name": "Badia Alcúdia des de puig-de-sa-tudossa-arta"
+  },
+  "ibred/l": {
+    "lat": 39.835296,
+    "lon": 3.17731,
+    "name": "Badia Alcúdia des de museu sa-bassa-blanca"
+  },
+  "ibred/q": {
+    "lat": 39.774574,
+    "lon": 2.661226,
+    "name": "Costa nord des de playa-alconasser-soller"
+  },
+  "ibred/r": {
+    "lat": 38.67651,
+    "lon": 1.502428,
+    "name": "Formentera des de la mola"
+  },
+  "ibred/t": {
+    "lat": 39.68206,
+    "lon": 3.455177,
+    "name": "font-de-sa-cala"
+  },
+  "ibred/v": {
+    "lat": 39.751749,
+    "lon": 3.264059,
+    "name": "badia alcúdia des de colonia-de-sant-pere"
+  },
+  "ipcamlive/MatiasBeach": {
+    "lat": 39.513484,
+    "lon": 2.538859,
+    "name": "Platja Son Maties"
+  },
+  "livecampro/1": {
+    "lat": 39.545019,
+    "lon": 2.386073,
+    "name": "Port Andratx"
+  },
+  "livecampro/2": {
+    "lat": 39.551541,
+    "lon": 2.607749,
+    "name": "Cala Major"
+  },
+  "livecampro/4": {
+    "lat": 39.534686,
+    "lon": 2.717979,
+    "name": "Platja dor (Can Pastilla)"
+  },
+  "livecampro/11": {
+    "lat": 39.891629,
+    "lon": 4.266886,
+    "name": "Port Maó"
+  },
+  "livecampro/14": {
+    "lat": 39.534686,
+    "lon": 2.717979,
+    "name": "Platja dor (Can Pastilla, desde Hotel Miraflores)"
+  },
+  "livecampro/18": {
+    "lat": 39.70967,
+    "lon": 3.462485,
+    "name": "Cala Ratjada"
+  },
+  "livecampro/21": {
+    "lat": 39.421346,
+    "lon": 3.262699,
+    "name": "Portocolom Llotja"
+  },
+  "livecampro/24": {
+    "lat": 39.804365,
+    "lon": 3.124077,
+    "name": "Playa de Muro (Hotel Playa Esperanza)"
+  },
+  "livecampro/30": {
+    "lat": 39.793832,
+    "lon": 2.693446,
+    "name": "Port Sóller"
+  },
+  "livecampro/35": {
+    "lat": 39.732343,
+    "lon": 3.239828,
+    "name": "Son Serra Marina (des de El Sol Sunshine Bar & Beach )"
+  },
+  "livecampro/39": {
+    "lat": 39.556531,
+    "lon": 2.625467,
+    "name": "Can Barbarà"
+  },
+  "livecampro/43": {
+    "lat": 39.534686,
+    "lon": 2.717979,
+    "name": "Platja dor (Can Pastilla, desde BonaOna)"
+  },
+  "livecampro/70": {
+    "lat": 39.538285,
+    "lon": 2.417824,
+    "name": "Camp de Mar"
+  },
+  "Monnaber/webcam-alcudia000M": {
+    "lat": 39.797049,
+    "lon": 3.127403,
+    "name": "Badia dAlcúdia"
+  },
+  "MultimediaTres/PortAndratx": {
+    "lat": 39.534601,
+    "lon": 2.376552,
+    "name": "Port dAndratx"
+  },
+  "SeeTheWorld/mallorca_pancam": {
+    "lat": 39.56426,
+    "lon": 2.629836,
+    "name": "Port Palma"
+  },
+  "SeeTheWorld/pollenca_panorama": {
+    "lat": 39.897665,
+    "lon": 3.0811,
+    "name": "Port Pollença"
+  },
+  "SeeTheWorld/port_de_soller": {
+    "lat": 39.79354,
+    "lon": 2.695116,
+    "name": "Port de Soller"
+  },
+  "skyline/cala-vadella-ibiza": {
+    "lat": 38.913472,
+    "lon": 1.223714,
+    "name": "Cala Vedella"
+  },
+  "skyline/es-pujols": {
+    "lat": 38.731022,
+    "lon": 1.455705,
+    "name": "Es pujols"
+  },
+  "skyline/la-savina": {
+    "lat": 38.730951,
+    "lon": 1.416244,
+    "name": "La Savina"
+  },
+  "skyline/mallorca-alcudia": {
+    "lat": 39.784909,
+    "lon": 3.151306,
+    "name": "Badia dAlcúdia"
+  },
+  "skyline/sant-antoni-de-portmany": {
+    "lat": 38.973481,
+    "lon": 1.306394,
+    "name": "sant-antoni-de-portmany"
+  },
+  "youtube/DsrQa_tZoWw": {
+    "lat": 39.535167,
+    "lon": 2.450765,
+    "name": "Platja Palmira (Paguera)"
+  },
+  "youtube/mCxR-gnn6iA": {
+    "lat": 39.490374,
+    "lon": 2.473176,
+    "name": "Port Adriano"
+  },
+  "youtube/MET1lsmJMrQ": {
+    "lat": 39.534245,
+    "lon": 2.456637,
+    "name": "Platja gran de Torà (Paguera)"
+  },
+  "youtube/TbttHwabtfE": {
+    "lat": 39.531708,
+    "lon": 2.43848,
+    "name": "Cala Fornells (Paguera) ??"
+  },
+  "youtube/WvZWS3D1tHw": {
+    "lat": 39.534108,
+    "lon": 2.445814,
+    "name": "Cala Fornells (Paguera)"
+  },
+  "youtube/Z9F_jN6xpFs": {
+    "lat": 39.516569,
+    "lon": 2.477481,
+    "name": "Santa Ponça"
+  }
+}

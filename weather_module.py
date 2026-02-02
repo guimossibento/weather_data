@@ -30,7 +30,7 @@ OPENMETEO_VARS = [
     'pressure_msl', 'precipitation', 'rain', 'wind_speed_10m', 'wind_direction_10m',
     'wind_gusts_10m', 'cloud_cover', 'cloud_cover_low', 'cloud_cover_mid', 'cloud_cover_high',
     'visibility', 'uv_index', 'uv_index_clear_sky', 'sunshine_duration',
-    'evapotranspiration', 'vapour_pressure_deficit'
+    'evapotranspiration', 'vapour_pressure_deficit', 'direct_radiation', 'shortwave_radiation'
 ]
 
 # Lazy loaded data
@@ -44,13 +44,16 @@ def _load_aemet_data(force_reload=False):
     if _df_bal is not None and not force_reload:
         return _df_bal
 
+    # Ensure cache directory exists
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
     # Try pickle cache first
     if AEMET_CACHE_FILE.exists() and not force_reload:
         try:
             _df_bal = pd.read_pickle(AEMET_CACHE_FILE)
             return _df_bal
-        except:
-            pass
+        except Exception as e:
+            print(f"[AEMET] Cache read error: {e}")
 
     # Load from JSON files (all years)
     json_files = sorted(glob.glob(str(AEMET_DIR / '**/*.json'), recursive=True))
@@ -83,8 +86,9 @@ def _load_aemet_data(force_reload=False):
     # Save pickle cache
     try:
         _df_bal.to_pickle(AEMET_CACHE_FILE)
-    except:
-        pass
+        print(f"[AEMET] Cached {len(_df_bal)} records")
+    except Exception as e:
+        print(f"[AEMET] Cache write error: {e}")
 
     return _df_bal
 
@@ -103,23 +107,25 @@ def _get_cache_key(lat, lon, target_dt):
 
 
 def _load_from_cache(lat, lon, target_dt):
+    RESULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = RESULT_CACHE_DIR / f"{_get_cache_key(lat, lon, target_dt)}.pkl"
     if cache_file.exists():
         try:
             with open(cache_file, 'rb') as f:
                 return pickle.load(f)
-        except:
-            pass
+        except Exception as e:
+            print(f"[Cache] Read error: {e}")
     return None
 
 
 def _save_to_cache(lat, lon, target_dt, result):
+    RESULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = RESULT_CACHE_DIR / f"{_get_cache_key(lat, lon, target_dt)}.pkl"
     try:
         with open(cache_file, 'wb') as f:
             pickle.dump(result, f)
-    except:
-        pass
+    except Exception as e:
+        print(f"[Cache] Write error: {e}")
 
 
 def _hull_multipoint_interpolate(points, values, target):
@@ -217,10 +223,20 @@ def _get_openmeteo(lat, lon, target_dt):
     cache_key = hashlib.md5(f"{lat:.4f}_{lon:.4f}_{start}_{end}".encode()).hexdigest()
     cache_file = CACHE_DIR / f"om_{cache_key}.json"
 
+    # Ensure cache directory exists
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
     if cache_file.exists():
-        with open(cache_file, 'r') as f:
-            data = json.load(f)
+        try:
+            with open(cache_file, 'r') as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"[OpenMeteo] Cache read error: {e}")
+            data = None
     else:
+        data = None
+
+    if data is None:
         try:
             resp = requests.get(
                 "https://archive-api.open-meteo.com/v1/archive",
@@ -230,18 +246,22 @@ def _get_openmeteo(lat, lon, target_dt):
                     'hourly': ','.join(OPENMETEO_VARS),
                     'timezone': 'Europe/Madrid'
                 },
-                timeout=30
+                timeout=None
             )
             resp.raise_for_status()
             data = resp.json()
 
-            # Check for API error response
             if 'error' in data:
                 print(f"[OpenMeteo] API error: {data.get('reason', 'Unknown')}")
                 return {}
 
-            with open(cache_file, 'w') as f:
-                json.dump(data, f)
+            # Save to cache
+            try:
+                with open(cache_file, 'w') as f:
+                    json.dump(data, f)
+            except Exception as e:
+                print(f"[OpenMeteo] Cache write error: {e}")
+
         except requests.exceptions.RequestException as e:
             print(f"[OpenMeteo] Request failed: {e}")
             return {}
@@ -312,7 +332,7 @@ def check_openmeteo_connectivity():
         resp = requests.get(
             "https://archive-api.open-meteo.com/v1/archive",
             params={'latitude': 39.5, 'longitude': 2.5, 'start_date': '2022-07-15', 'end_date': '2022-07-16', 'hourly': 'temperature_2m'},
-            timeout=10
+            timeout=None
         )
         return {"status": "ok", "code": resp.status_code}
     except requests.exceptions.RequestException as e:

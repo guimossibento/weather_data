@@ -1,0 +1,22 @@
+{
+  "skyline/cala-vadella-ibiza": {
+    "lat": 38.913472,
+    "lon": 1.223714,
+    "name": "Cala Vedella"
+  },
+  "skyline/es-pujols": {
+    "lat": 38.731022,
+    "lon": 1.455705,
+    "name": "Es pujols"
+  },
+  "skyline/la-savina": {
+    "lat": 38.730951,
+    "lon": 1.416244,
+    "name": "La Savina"
+  },
+  "skyline/mallorca-alcudia": {
+    "lat": 39.784909,
+    "lon": 3.151306,
+    "name": "Badia dAlcúdia"
+  }
+}
