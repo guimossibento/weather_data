@@ -3,3 +3,9 @@
 .idea
 
 *.zip
+
+models/prediction
+
+checkpoints
+
+lightning_logs
